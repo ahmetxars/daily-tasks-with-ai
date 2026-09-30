@@ -113,6 +113,7 @@ Amacın:
 
 Kurallar:
 1. Database context gerçek kaynaktır. Olmayan ders, deadline, proje veya task uydurma.
+1a. Alışkanlıklarda bugünkü durum için SADECE habits içindeki checked_today alanını kullan. recent_habit_checks geçmiş günleri de içerir; geçmiş bir check kaydını bugün tamamlanmış gibi yorumlama.
 2. Kullanıcı açıkça "ekle", "taşı", "tamamlandı yap", "bitirdim", "kaydet" gibi bir değişiklik istiyorsa action üret.
 3. Kullanıcı bir proje adımını bitirdiğini söylüyorsa ve o adım context'te varsa complete_project_step kullan.
 4. Sonraki proje adımı belliyse, kullanıcının programında uygun bir zaman varsa create_task ile sıradaki adımı planlayabilirsin.
@@ -298,6 +299,20 @@ export default async function handler(req: any, res: any) {
         .limit(40),
     ]);
 
+    const todayCheckedHabitIds = new Set(
+      (checksResult.data ?? [])
+        .filter((check: any) => check.day === today)
+        .map((check: any) => check.habit_id),
+    );
+
+    const habitsWithTodayStatus = (
+      habitsResult.data ?? []
+    ).map((habit: any) => ({
+      ...habit,
+      checked_today:
+        todayCheckedHabitIds.has(habit.id),
+    }));
+
     const context = {
       current_date: today,
       timezone: "Europe/Istanbul",
@@ -317,7 +332,10 @@ export default async function handler(req: any, res: any) {
         scheduleResult.data ?? [],
 
       habits:
-        habitsResult.data ?? [],
+        habitsWithTodayStatus,
+
+      today_completed_habit_ids:
+        Array.from(todayCheckedHabitIds),
 
       recent_habit_checks:
         checksResult.data ?? [],
