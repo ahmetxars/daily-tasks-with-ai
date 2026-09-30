@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AssistantPanel } from "@/components/ai/assistant-panel";
 import { HabitDialog } from "@/components/grove/habit-dialog";
 import { MonthCalendar } from "@/components/grove/month-calendar";
 import { TodayPanel } from "@/components/grove/today-panel";
@@ -120,6 +121,8 @@ function GroveReady() {
           </div>
         </div>
       </main>
+
+      <AssistantPanel />
 
       <HabitDialog
         open={editor !== null}
