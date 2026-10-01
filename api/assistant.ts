@@ -43,8 +43,11 @@ const schema = {
               "reschedule_task",
               "complete_task",
               "create_project",
+              "create_project_plan",
               "create_project_step",
               "complete_project_step",
+              "create_schedule_event",
+              "cancel_schedule_event",
               "create_memory",
               "none"
             ],
@@ -80,6 +83,29 @@ const schema = {
           step_order: {
             type: ["integer", "null"],
           },
+          steps: {
+            type: ["array", "null"],
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                title: {
+                  type: "string",
+                },
+                description: {
+                  type: ["string", "null"],
+                },
+                estimated_minutes: {
+                  type: ["integer", "null"],
+                }
+              },
+              required: [
+                "title",
+                "description",
+                "estimated_minutes"
+              ]
+            }
+          },
         },
         required: [
           "type",
@@ -92,7 +118,8 @@ const schema = {
           "priority",
           "project_id",
           "project_step_id",
-          "step_order"
+          "step_order",
+          "steps"
         ],
       },
     },
@@ -125,6 +152,14 @@ Kurallar:
 10. Küçük ve açık değişiklikleri doğrudan uygula.
 11. Cevabı Türkçe ver.
 12. Gereksiz uzun konuşma yapma; ne değiştirdiğini net söyle.
+13. Kullanıcı yeni bir proje ve birden fazla roadmap adımı verirse create_project_plan kullan. Bu action project ve tüm adımlarını tek seferde oluşturur.
+14. create_project_plan içindeki steps sırası yapılma sırasıdır.
+15. Bir proje zaten varsa aynı projeyi tekrar oluşturma.
+16. Kullanıcı ders, randevu veya etkinlik eklemek isterse create_schedule_event kullan.
+17. Kullanıcı bir etkinliğin iptal olduğunu söylerse mevcut context'teki doğru etkinliği bul ve cancel_schedule_event kullan.
+18. Bir task için saat seçerken upcoming_schedule içindeki etkinliklerle çakıştırma.
+19. Kullanıcı belirli saat vermediyse ve bir güne task yerleştirmeni istiyorsa o günün mevcut programına göre makul bir boşluk seç.
+20. Çalışma tasklarını mümkünse 08:00-22:00 arasında planla.
 `;
 
 export default async function handler(req: any, res: any) {
@@ -136,8 +171,8 @@ export default async function handler(req: any, res: any) {
 
   try {
     const openaiKey = process.env.OPENAI_API_KEY;
-    const supabaseUrl = process.env.VITE_SUPABASE_URL;
-    const supabaseKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+    const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
     if (!openaiKey) {
       return res.status(500).json({
@@ -535,6 +570,76 @@ ${message}
       }
 
       if (
+        action.type === "create_project_plan" &&
+        action.title
+      ) {
+        const { data: project, error: projectError } =
+          await supabase
+            .from("projects")
+            .insert({
+              user_id: user.id,
+              title: action.title,
+              description:
+                action.description ?? null,
+              priority:
+                action.priority ?? "medium",
+              status: "active",
+            })
+            .select()
+            .single();
+
+        if (projectError) {
+          throw projectError;
+        }
+
+        const steps = Array.isArray(action.steps)
+          ? action.steps
+          : [];
+
+        let createdSteps: any[] = [];
+
+        if (steps.length > 0) {
+          const rows = steps.map(
+            (step: any, index: number) => ({
+              user_id: user.id,
+              project_id: project.id,
+              title: step.title,
+              description:
+                step.description ?? null,
+              estimated_minutes:
+                step.estimated_minutes ?? null,
+              step_order: index + 1,
+              status: "todo",
+            }),
+          );
+
+          const {
+            data,
+            error: stepError,
+          } = await supabase
+            .from("project_steps")
+            .insert(rows)
+            .select();
+
+          if (stepError) {
+            throw stepError;
+          }
+
+          createdSteps = data ?? [];
+        }
+
+        applied.push({
+          type: action.type,
+          data: {
+            project,
+            steps: createdSteps,
+          },
+        });
+
+        continue;
+      }
+
+      if (
         action.type === "create_project" &&
         action.title
       ) {
@@ -610,6 +715,82 @@ ${message}
           .eq("user_id", user.id)
           .select()
           .single();
+
+        if (error) throw error;
+
+        applied.push({
+          type: action.type,
+          data,
+        });
+
+        continue;
+      }
+
+      if (
+        action.type === "create_schedule_event" &&
+        action.title &&
+        action.scheduled_date &&
+        action.start_time
+      ) {
+        const duration =
+          action.estimated_minutes ?? 60;
+
+        const start = new Date(
+          `${action.scheduled_date}T${action.start_time}:00+03:00`
+        );
+
+        const end = new Date(
+          start.getTime() +
+          duration * 60 * 1000
+        );
+
+        const { data, error } =
+          await supabase
+            .from("schedule_events")
+            .insert({
+              user_id: user.id,
+              title: action.title,
+              description:
+                action.description ?? null,
+              start_at:
+                start.toISOString(),
+              end_at:
+                end.toISOString(),
+              status: "active",
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        applied.push({
+          type: action.type,
+          data,
+        });
+
+        continue;
+      }
+
+      if (
+        action.type === "cancel_schedule_event" &&
+        action.entity_id
+      ) {
+        const { data, error } =
+          await supabase
+            .from("schedule_events")
+            .update({
+              status: "cancelled",
+            })
+            .eq(
+              "id",
+              action.entity_id,
+            )
+            .eq(
+              "user_id",
+              user.id,
+            )
+            .select()
+            .single();
 
         if (error) throw error;
 
