@@ -197,6 +197,26 @@ export function PlannerPanel() {
     }
   }, [open]);
 
+  useEffect(() => {
+    const refresh = () => {
+      if (open) {
+        void load();
+      }
+    };
+
+    window.addEventListener(
+      "planner-data-changed",
+      refresh,
+    );
+
+    return () => {
+      window.removeEventListener(
+        "planner-data-changed",
+        refresh,
+      );
+    };
+  }, [open]);
+
   async function addTask() {
     const title =
       newTask.trim();

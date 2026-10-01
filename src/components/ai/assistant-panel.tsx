@@ -111,6 +111,12 @@ export function AssistantPanel() {
         data.applied.length > 0
       ) {
         answer += `\n\n✓ ${data.applied.length} değişiklik uygulandı.`;
+
+        window.dispatchEvent(
+          new Event(
+            "planner-data-changed"
+          )
+        );
       }
 
       setMessages((current) => [

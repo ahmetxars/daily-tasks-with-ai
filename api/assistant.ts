@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 const MODEL = "gpt-5.6-luna";
@@ -9,6 +10,48 @@ function istanbulDate(date = new Date()) {
     month: "2-digit",
     day: "2-digit",
   }).format(date);
+}
+
+function addDaysToDateKey(
+  key: string,
+  days: number,
+) {
+  const date = new Date(
+    `${key}T12:00:00+03:00`,
+  );
+
+  date.setUTCDate(
+    date.getUTCDate() + days,
+  );
+
+  return date
+    .toISOString()
+    .slice(0, 10);
+}
+
+function isoWeekday(key: string) {
+  const date = new Date(
+    `${key}T12:00:00+03:00`,
+  );
+
+  const day = date.getUTCDay();
+
+  return day === 0 ? 7 : day;
+}
+
+function nextWeekdayDate(
+  from: string,
+  targetWeekday: number,
+) {
+  const current = isoWeekday(from);
+
+  const diff =
+    (targetWeekday - current + 7) % 7;
+
+  return addDaysToDateKey(
+    from,
+    diff,
+  );
 }
 
 function outputText(response: any): string {
@@ -47,6 +90,7 @@ const schema = {
               "create_project_step",
               "complete_project_step",
               "create_schedule_event",
+              "create_weekly_schedule_series",
               "cancel_schedule_event",
               "create_memory",
               "none"
@@ -82,6 +126,16 @@ const schema = {
           },
           step_order: {
             type: ["integer", "null"],
+          },
+          weekday: {
+            type: ["integer", "null"],
+            minimum: 1,
+            maximum: 7,
+          },
+          repeat_weeks: {
+            type: ["integer", "null"],
+            minimum: 1,
+            maximum: 30,
           },
           steps: {
             type: ["array", "null"],
@@ -119,6 +173,8 @@ const schema = {
           "project_id",
           "project_step_id",
           "step_order",
+          "weekday",
+          "repeat_weeks",
           "steps"
         ],
       },
@@ -160,6 +216,12 @@ Kurallar:
 18. Bir task için saat seçerken upcoming_schedule içindeki etkinliklerle çakıştırma.
 19. Kullanıcı belirli saat vermediyse ve bir güne task yerleştirmeni istiyorsa o günün mevcut programına göre makul bir boşluk seç.
 20. Çalışma tasklarını mümkünse 08:00-22:00 arasında planla.
+21. Kullanıcı her hafta tekrar eden bir ders veya etkinlik söylüyorsa create_weekly_schedule_series kullan.
+22. weekday ISO standardıdır: Pazartesi=1, Salı=2, Çarşamba=3, Perşembe=4, Cuma=5, Cumartesi=6, Pazar=7.
+23. repeat_weeks kullanıcı belirtmezse 16 kullan.
+24. scheduled_date haftalık serinin başlayabileceği en erken tarihtir. Kullanıcı başlangıç tarihi belirtmediyse null bırak.
+25. Tek seferlik ders veya etkinlik için create_schedule_event kullan.
+26. Kullanıcı açıkça haftalık ders programını tanımlıyorsa bir mesajda birden fazla create_weekly_schedule_series action üretebilirsin; bu durum toplu değişiklik onayı kuralının istisnasıdır.
 `;
 
 export default async function handler(req: any, res: any) {
@@ -721,6 +783,122 @@ ${message}
         applied.push({
           type: action.type,
           data,
+        });
+
+        continue;
+      }
+
+      if (
+        action.type === "create_weekly_schedule_series" &&
+        action.title &&
+        action.weekday &&
+        action.start_time
+      ) {
+        const weekday = Math.min(
+          7,
+          Math.max(
+            1,
+            Number(action.weekday),
+          ),
+        );
+
+        const repeatWeeks = Math.min(
+          30,
+          Math.max(
+            1,
+            Number(
+              action.repeat_weeks ?? 16,
+            ),
+          ),
+        );
+
+        const duration =
+          action.estimated_minutes ?? 60;
+
+        const baseDate =
+          action.scheduled_date ?? today;
+
+        const firstDate =
+          nextWeekdayDate(
+            baseDate,
+            weekday,
+          );
+
+        const seriesId =
+          randomUUID();
+
+        const rows = [];
+
+        for (
+          let i = 0;
+          i < repeatWeeks;
+          i++
+        ) {
+          const eventDate =
+            addDaysToDateKey(
+              firstDate,
+              i * 7,
+            );
+
+          const start =
+            new Date(
+              `${eventDate}T${action.start_time}:00+03:00`,
+            );
+
+          const end =
+            new Date(
+              start.getTime() +
+                duration *
+                  60 *
+                  1000,
+            );
+
+          rows.push({
+            user_id: user.id,
+            title: action.title,
+            description:
+              action.description ?? null,
+            start_at:
+              start.toISOString(),
+            end_at:
+              end.toISOString(),
+            recurrence: "weekly",
+            series_id: seriesId,
+            status: "active",
+          });
+        }
+
+        const {
+          data,
+          error,
+        } = await supabase
+          .from("schedule_events")
+          .upsert(
+            rows,
+            {
+              onConflict:
+                "user_id,title,start_at",
+            },
+          )
+          .select(
+            "id,title,start_at,end_at,series_id"
+          );
+
+        if (error) {
+          throw error;
+        }
+
+        applied.push({
+          type: action.type,
+          data: {
+            series_id: seriesId,
+            created_count:
+              data?.length ?? 0,
+            first_date:
+              firstDate,
+            repeat_weeks:
+              repeatWeeks,
+          },
         });
 
         continue;

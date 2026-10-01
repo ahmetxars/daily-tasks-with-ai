@@ -18,7 +18,6 @@ import { AssistantPanel } from "@/components/ai/assistant-panel";
 import { PlannerPanel } from "@/components/planner/planner-panel";
 import { HabitDialog } from "@/components/grove/habit-dialog";
 import { MonthCalendar } from "@/components/grove/month-calendar";
-import { TodayPanel } from "@/components/grove/today-panel";
 import { WeekGrid } from "@/components/grove/week-grid";
 import { cn } from "@/lib/utils";
 import {
@@ -31,6 +30,7 @@ import {
   type Habit,
 } from "@/lib/habits/model";
 import { useChecks, useHabitHydration, useHabitStore, useHabits } from "@/lib/habits/store";
+import { DailyOverview } from "@/components/planner/daily-overview";
 
 type CalendarView = "week" | "month";
 
@@ -97,13 +97,7 @@ function GroveReady() {
         <OverviewStrip overview={overview} />
 
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
-          <TodayPanel
-            date={selected}
-            onAdd={() => setEditor("new")}
-            onEdit={(habit) => setEditor(habit)}
-            onDelete={setPendingDelete}
-            onJumpToday={() => selectDate(today())}
-          />
+          <DailyOverview />
           <div className="min-w-0">
             {view === "week" ? (
               <WeekGrid
