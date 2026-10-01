@@ -5,6 +5,7 @@ import type { Session } from "@supabase/supabase-js";
 import { GroveApp } from "@/components/grove/grove-app";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { supabase } from "@/lib/supabase";
+import { ensureProfile } from "@/lib/profile";
 import "./styles.css";
 
 function App() {
@@ -12,8 +13,17 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       setSession(data.session);
+
+      if (data.session) {
+        try {
+          await ensureProfile();
+        } catch (error) {
+          console.error("Profile setup failed:", error);
+        }
+      }
+
       setLoading(false);
     });
 
@@ -54,7 +64,19 @@ createRoot(root).render(
 );
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/sw.js").catch(console.warn);
-  });
+  if (import.meta.env.PROD) {
+    window.addEventListener("load", () => {
+      void navigator.serviceWorker.register("/sw.js").catch(console.warn);
+    });
+  } else {
+    void navigator.serviceWorker
+      .getRegistrations()
+      .then((registrations) =>
+        Promise.all(
+          registrations.map((registration) =>
+            registration.unregister()
+          )
+        )
+      );
+  }
 }
